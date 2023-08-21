@@ -1,0 +1,127 @@
+name: Authentication
+
+testcases:
+  - name: DB cleanup
+    steps:
+      - name: Delete a user
+        type: sql
+        driver: sqlite
+        dsn: {{.dsn}}
+        commands:
+          - "DELETE FROM users WHERE user_email IS NULL OR user_email != 'admin@domain.com';"
+          - "SELECT count(*) AS count FROM users WHERE user_email == 'admin@domain.com';"
+        assertions:
+          - result.queries.__len__ ShouldEqual 2
+          - result.queries.queries1.rows.rows0.count ShouldEqual 0
+  - name: SimpleLogin
+    steps:
+      - type: sql
+        driver: sqlite
+        dsn: {{.dsn}}
+        commands:
+          - "SELECT user_last_login FROM users WHERE user_email = 'admin@domain.com'"
+        assertions:
+          - result.queries.__len__ ShouldEqual 1
+        vars:
+          last_login:
+            from: result.queries.queries0.rows.rows0.user_last_login
+      - type: exec
+        script: sleep 1
+      - type: http
+        method: POST
+        headers:
+          accept: application/json
+        body: |
+          {"email": "admin@domain.com", "password":"SomePassword"}
+        url: "{{.url}}/login"
+        timeout: 5
+        assertions:
+          - result.statuscode ShouldEqual 200
+          - result.bodyjson ShouldContainKey token
+          - result.bodyjson ShouldContainKey token_expire
+      - type: sql
+        driver: sqlite
+        dsn: {{.dsn}}
+        commands:
+          - "SELECT user_last_login FROM users WHERE user_email = 'admin@domain.com'"
+        assertions:
+          - result.queries.queries0.rows.rows0.user_last_login ShouldBeGreaterThan {{.SimpleLogin.last_login}}
+  - name: Login with missing email field should return 400
+    steps:
+      - type: http
+        method: POST
+        headers:
+          accept: application/json
+        body: |
+          {"password":"SomePassword"}
+        url: "{{.url}}/login"
+        timeout: 5
+        assertions:
+          - result.statuscode ShouldEqual 400
+          - result.bodyjson.error ShouldEqual email is required
+  - name: Login with missing password field should return 400
+    steps:
+      - type: http
+        method: POST
+        headers:
+          accept: application/json
+        body: |
+          {"email": "admin@domain.com"}
+        url: "{{.url}}/login"
+        timeout: 5
+        assertions:
+          - result.statuscode ShouldEqual 400
+          - result.bodyjson.error ShouldEqual password is required
+  - name: Login with not registered user should return 401
+    steps:
+      - type: http
+        method: POST
+        headers:
+          accept: application/json
+        body: |
+          {"email": "uknown@domain.com", "password":"SomePassword"}
+        url: "{{.url}}/login"
+        timeout: 5
+        assertions:
+          - result.statuscode ShouldEqual 401
+          - result.bodyjson.error ShouldEqual user uknown@domain.com doesn't exists
+  - name: Login with wrong password should return 401
+    steps:
+      - type: http
+        method: POST
+        headers:
+          accept: application/json
+        body: |
+          {"email": "admin@domain.com", "password":"SomePassword1"}
+        url: "{{.url}}/login"
+        timeout: 5
+        assertions:
+          - result.statuscode ShouldEqual 401
+          - result.bodyjson.error ShouldEqual wrong password
+  - name: Login with deactivated user account should return 401
+    steps:
+      - name: Deactivate the user
+        type: sql
+        driver: sqlite
+        dsn: {{.dsn}}
+        commands:
+          - "UPDATE users SET user_active = 0 WHERE user_email = 'admin@domain.com';"
+      - name: Make http request
+        type: http
+        method: POST
+        headers:
+          accept: application/json
+        body: |
+          {"email": "admin@domain.com", "password":"SomePassword"}
+        url: "{{.url}}/login"
+        timeout: 5
+        assertions:
+          - result.statuscode ShouldEqual 401
+          - result.bodyjson.error ShouldEqual user admin@domain.com is deactivated
+      - name: Activate the user
+        type: sql
+        driver: sqlite
+        dsn: {{.dsn}}
+        commands:
+          - "UPDATE users SET user_active = 1 WHERE user_email = 'admin@domain.com';"
+

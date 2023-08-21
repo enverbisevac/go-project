@@ -1,0 +1,258 @@
+name: Users API
+
+testcases:
+  - name: DB cleanup
+    steps:
+      - name: Delete a user
+        type: sql
+        driver: sqlite
+        dsn: {{.dsn}}
+        commands:
+          - "DELETE FROM users WHERE user_email IS NULL OR user_email != 'admin@domain.com';"
+          - "SELECT count(*) AS count FROM users WHERE user_email == 'admin@domain.com';"
+        assertions:
+          - result.queries.__len__ ShouldEqual 2
+          - result.queries.queries1.rows.rows0.count ShouldEqual 1
+  - name: Authorization
+    steps:
+      - type: http
+        method: POST
+        headers:
+          accept: application/json
+        body: |
+          {"email": "admin@domain.com", "password":"SomePassword"}
+        url: "{{.url}}/login"
+        timeout: 5
+        vars:
+          token:
+            from: result.bodyjson.token
+  - name: CreateUser with bad formed json body should return 400
+    steps:
+      - type: http
+        url: "{{.url}}/users"
+        method: POST
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "email": "user@domain.com",
+        assertions:
+          - result.statuscode ShouldEqual 400
+          - result.bodyjson.error ShouldEqual body contains badly-formed JSON
+  - name: when user full name is empty return 400
+    steps:
+      - type: http
+        url: "{{.url}}/users"
+        method: POST
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "email": "some@domain.com",
+            "password": "bzvpslkdjf"
+          }
+        assertions:
+          - result.statuscode ShouldEqual 400
+          - result.bodyjson.error ShouldEqual full_name is required
+  - name: when user email is empty then return 400
+    steps:
+      - type: http
+        url: "{{.url}}/users"
+        method: POST
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "full_name": "user",
+            "password": "bzvpslkdjf"
+          }
+        assertions:
+          - result.statuscode ShouldEqual 400
+          - result.bodyjson.error ShouldEqual email is required
+  - name: when user email is not null but it is empty then return 400
+    steps:
+      - type: http
+        url: "{{.url}}/users"
+        method: POST
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "email": "",
+            "full_name": "user",
+            "password": "bzvpslkdjf",
+          }
+        assertions:
+          - result.statuscode ShouldEqual 400
+          - result.bodyjson.error ShouldEqual email is required
+  - name: when user password is common then return 400
+    steps:
+      - type: http
+        url: "{{.url}}/users"
+        method: POST
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "email": "admin2@domain.com",
+            "full_name": "user",
+            "password": "12345678",
+          }
+        assertions:
+          - result.statuscode ShouldEqual 400
+          - result.bodyjson.error ShouldEqual password is common
+  - name: CreateUser with same email should return conflict 409
+    steps:
+      - type: http
+        url: "{{.url}}/users"
+        method: POST
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "active": true,
+            "email": "admin@domain.com",
+            "password": "bzvpslkdjf",
+            "full_name": "Admin",
+            "is_admin": false,
+            "permissions": [
+                { "permission":"create_user" }
+            ]
+          }
+        assertions:
+          - result.statuscode ShouldEqual 409
+          - result.bodyjson.error ShouldEqual email is already taken
+  - name: CreateUser happy path
+    steps:
+      - type: http
+        url: "{{.url}}/users"
+        method: POST
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "email": "user@domain.com",
+            "password": "bzvpslkdjf",
+            "full_name": "User",
+            "is_admin": false,
+            "permissions": [
+                { "permission":"create_user" }
+            ]
+          }
+        assertions:
+          - result.statuscode ShouldEqual 201
+          - result.bodyjson.id ShouldNotBeEmpty
+  - name: CreateUser with custom ID
+    steps:
+      - type: http
+        url: "{{.url}}/users"
+        method: POST
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "id": "ID12345",
+            "email": "someuser@domain.com",
+            "password": "bzvpslkdjf",
+            "full_name": "User",
+            "is_admin": false,
+            "permissions": [
+                { "permission":"create_user" }
+            ]
+          }
+        assertions:
+          - result.statuscode ShouldEqual 201
+          - result.bodyjson.id ShouldEqual ID12345
+  - name: GetUser should return 200
+    steps:
+      - type: http
+        url: "{{.url}}/users/ID12345"
+        method: GET
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        assertions:
+          - result.statuscode ShouldEqual 200
+          - result.bodyjson.full_name ShouldEqual User
+  - name: if user doesn't exists GetUser should return 404
+    steps:
+      - type: http
+        url: "{{.url}}/users/unknown"
+        method: GET
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        assertions:
+          - result.statuscode ShouldEqual 404
+          - result.bodyjson.error ShouldEqual user not found with id = unknown
+  - name: if user doesn't exists UpdateUser should return 404
+    steps:
+      - type: http
+        url: "{{.url}}/users/unknown"
+        method: PUT
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "email": "user10@domain.com",
+            "full_name": "User 10",
+            "is_admin": false,
+            "permissions": [
+                { "permission":"create_user" },
+                { "permission":"view_user" }
+            ]
+          }
+        assertions:
+          - result.statuscode ShouldEqual 404
+          - result.bodyjson.error ShouldEqual not found in users
+  - name: Update user with valid input should return OK 200
+    steps:
+      - type: http
+        url: "{{.url}}/users/ID12345"
+        method: PUT
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        body: |
+          {
+            "email": "user10@domain.com",
+            "full_name": "User 10",
+            "is_admin": false,
+            "permissions": [
+                { "permission":"create_user" },
+                { "permission":"view_user" }
+            ]
+          }
+        assertions:
+          - result.statuscode ShouldEqual 200
+          - result.bodyjson.email ShouldEqual user10@domain.com
+  - name: if user doesn't exists DeleteUser should return 404
+    steps:
+      - type: http
+        url: "{{.url}}/users/unknown"
+        method: DELETE
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        assertions:
+          - result.statuscode ShouldEqual 404
+          - result.bodyjson.error ShouldEqual not found in users
+  - name: Delete existing user should return 204
+    steps:
+      - type: http
+        url: "{{.url}}/users/ID12345"
+        method: DELETE
+        headers:
+          accept: application/json
+          authorization: Bearer {{.Authorization.token}}
+        assertions:
+          - result.statuscode ShouldEqual 204

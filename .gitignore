@@ -1,0 +1,14 @@
+.DS_Store
+vendor
+bin/
+.idea
+coverage.out
+db.sqlite*
+*.session.sql
+__debug*
+.vscode/settings.json
+*.log
+app.db
+app.db-*
+go.work
+go.work.sum

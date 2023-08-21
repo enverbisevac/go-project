@@ -1,0 +1,11 @@
+name: Status check
+
+testcases:
+  - name: Test status check
+    steps:
+      - type: http
+        method: GET
+        url: "{{.url}}/status"
+        timeout: 5
+        assertions:
+          - result.statuscode ShouldEqual 200
